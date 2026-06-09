@@ -1,0 +1,24 @@
+{
+  "name": "PADU - Portal Asesmen Dua Ciksel",
+  "short_name": "PADU",
+  "description": "Aplikasi asesmen digital SMAN 2 Cikarang Selatan",
+  "start_url": "/student",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b2545",
+  "theme_color": "#0b2545",
+  "icons": [
+    {
+      "src": "/padu-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/padu-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
