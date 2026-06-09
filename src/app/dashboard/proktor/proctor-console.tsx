@@ -71,6 +71,10 @@ function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60 * 1000);
 }
 
+function addMinutesToDateTime(date: string, time: string, minutes: number) {
+  return timeValue(addMinutes(new Date(`${date}T${time}:00`), minutes));
+}
+
 function localTimestamp(date: Date) {
   return `${todayValue()}T${timeValue(date)}:00`;
 }
@@ -389,10 +393,11 @@ export function ProctorConsole() {
     }
     const now = new Date();
     let startTime = manualStartTime;
-    let endTime = manualEndTime;
+    const duration = manualMode === "tka" ? Math.max(1, manualTotalQuestions) : manualDuration;
+    let endTime = manualMode === "tka" ? addMinutesToDateTime(selectedDate, startTime, duration) : manualEndTime;
     if (selectedDate === todayValue() && `${selectedDate}T${endTime}:00` <= `${selectedDate}T${timeValue(now)}:00`) {
       startTime = timeValue(now);
-      endTime = timeValue(addMinutes(now, manualDuration));
+      endTime = timeValue(addMinutes(now, duration));
       setManualStartTime(startTime);
       setManualEndTime(endTime);
     }
@@ -408,7 +413,7 @@ export function ProctorConsole() {
         gradeLevel,
         startTime: `${selectedDate}T${startTime}:00`,
         endTime: `${selectedDate}T${endTime}:00`,
-        durationMinutes: manualDuration,
+        durationMinutes: duration,
         totalQuestions: manualTotalQuestions,
         classIds: selectedClassIds
       })
@@ -746,19 +751,28 @@ export function ProctorConsole() {
             <input value={manualTitle} onChange={(event) => setManualTitle(event.target.value)} className="mt-1 w-full rounded-md border px-3 py-2" placeholder={manualMode === "tka" ? `Contoh: Numerasi Kelas ${gradeLevel}` : `Contoh: Penilaian Harian Kelas ${gradeLevel}`} />
           </label>
         </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-4">
+        <div className={`mt-3 grid gap-3 ${manualMode === "tka" ? "md:grid-cols-3" : "md:grid-cols-4"}`}>
           <label className="text-sm font-medium">
             Mulai
             <input type="time" value={manualStartTime} onChange={(event) => setManualStartTime(event.target.value)} className="mt-1 w-full rounded-md border px-3 py-2" />
           </label>
-          <label className="text-sm font-medium">
-            Selesai
-            <input type="time" value={manualEndTime} onChange={(event) => setManualEndTime(event.target.value)} className="mt-1 w-full rounded-md border px-3 py-2" />
-          </label>
-          <label className="text-sm font-medium">
-            Durasi Menit
-            <input type="number" value={manualDuration} onChange={(event) => setManualDuration(Number(event.target.value))} className="mt-1 w-full rounded-md border px-3 py-2" />
-          </label>
+          {manualMode === "asesmen" ? (
+            <>
+              <label className="text-sm font-medium">
+                Selesai
+                <input type="time" value={manualEndTime} onChange={(event) => setManualEndTime(event.target.value)} className="mt-1 w-full rounded-md border px-3 py-2" />
+              </label>
+              <label className="text-sm font-medium">
+                Durasi Menit
+                <input type="number" value={manualDuration} onChange={(event) => setManualDuration(Number(event.target.value))} className="mt-1 w-full rounded-md border px-3 py-2" />
+              </label>
+            </>
+          ) : (
+            <div className="rounded-md bg-blue-50 px-3 py-2 text-sm font-semibold text-navy-900">
+              Selesai otomatis: {addMinutesToDateTime(selectedDate, manualStartTime, Math.max(1, manualTotalQuestions))}
+              <span className="mt-1 block text-xs text-slate-600">Durasi TKA = jumlah soal. {manualTotalQuestions || 0} soal = {manualTotalQuestions || 0} menit.</span>
+            </div>
+          )}
           <label className="text-sm font-medium">
             Jumlah Soal
             <input type="number" value={manualTotalQuestions} onChange={(event) => setManualTotalQuestions(Number(event.target.value))} className="mt-1 w-full rounded-md border px-3 py-2" />

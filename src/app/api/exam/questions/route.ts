@@ -17,7 +17,10 @@ export async function GET(request: Request) {
 
   if (error) return jsonError(error.message);
   const questions = (data ?? []).map((question) => {
-    if (question.question_type !== "matching") return question;
+    const mediaUrl = question.media_url
+      ? supabaseAdmin.storage.from("question-images").getPublicUrl(question.media_url).data.publicUrl || question.media_url
+      : question.media_url;
+    if (question.question_type !== "matching") return { ...question, media_url: mediaUrl };
     const pairs = Array.isArray(question.question_answer_keys?.[0]?.answer_key?.pairs)
       ? question.question_answer_keys[0].answer_key.pairs
       : [];
@@ -32,6 +35,7 @@ export async function GET(request: Request) {
     const split = Math.ceil(right.length / 2);
     return {
       ...question,
+      media_url: mediaUrl,
       question_answer_keys: undefined,
       matching_items: {
         left,

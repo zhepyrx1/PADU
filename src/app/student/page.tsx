@@ -178,6 +178,22 @@ export default function StudentAppPage() {
     setActiveMatchLeft(null);
   }
 
+  async function chooseAppMode(nextMode: AppMode) {
+    setAppMode(nextMode);
+    setMessage("");
+    setLoading(true);
+    const response = await fetch(`/api/student/exams?mode=${nextMode}`, { cache: "no-store" });
+    const data = await response.json();
+    setLoading(false);
+    if (!response.ok) {
+      setMode("login");
+      return;
+    }
+    setStudent(data.student);
+    setExams(data.exams ?? []);
+    setMode("dashboard");
+  }
+
   async function login() {
     setLoading(true);
     setMessage("");
@@ -218,7 +234,8 @@ export default function StudentAppPage() {
   }
 
   function updateApp() {
-    window.location.reload();
+    setMessage("Memperbarui dashboard...");
+    void loadDashboard().then(() => setMessage("Dashboard sudah diperbarui."));
   }
 
   async function enterToken(item: ExamItem) {
@@ -396,9 +413,9 @@ export default function StudentAppPage() {
   }, [todayKey]);
 
   useEffect(() => {
-    if (message !== "Soal berhasil direfresh.") return;
+    if (!["Soal berhasil direfresh.", "Dashboard sudah diperbarui."].includes(message)) return;
     const timer = window.setTimeout(() => {
-      setMessage((currentMessage) => currentMessage === "Soal berhasil direfresh." ? "" : currentMessage);
+      setMessage((currentMessage) => ["Soal berhasil direfresh.", "Dashboard sudah diperbarui."].includes(currentMessage) ? "" : currentMessage);
     }, 5000);
     return () => window.clearTimeout(timer);
   }, [message]);
@@ -412,17 +429,18 @@ export default function StudentAppPage() {
             <h2 className="text-center text-3xl font-black">Pilih Mode</h2>
             <p className="mt-2 text-center text-sm font-medium text-cyan-100">Masuk sesuai kebutuhan ujian hari ini.</p>
             <div className="mt-7 grid gap-3">
-              <button onClick={() => { setAppMode("asesmen"); setMessage(""); setMode("login"); }} className="rounded-[1.5rem] bg-white p-5 text-left text-navy-900 shadow-lg">
+              <button onClick={() => void chooseAppMode("asesmen")} className="rounded-[1.5rem] bg-white p-5 text-left text-navy-900 shadow-lg">
                 <div className="text-xs font-black uppercase tracking-wide text-cyan-700">Mode Sekolah</div>
                 <div className="mt-1 text-2xl font-black">Asesmen</div>
                 <p className="mt-2 text-sm font-semibold text-slate-600">Untuk ujian mapel resmi sesuai jadwal proktor.</p>
               </button>
-              <button onClick={() => { setAppMode("tka"); setMessage(""); setMode("login"); }} className="rounded-[1.5rem] bg-lime-300 p-5 text-left text-navy-900 shadow-lg shadow-black/20">
+              <button onClick={() => void chooseAppMode("tka")} className="rounded-[1.5rem] bg-lime-300 p-5 text-left text-navy-900 shadow-lg shadow-black/20">
                 <div className="text-xs font-black uppercase tracking-wide text-navy-700">Mode Latihan</div>
                 <div className="mt-1 text-2xl font-black">Simulasi TKA</div>
                 <p className="mt-2 text-sm font-semibold text-navy-800">1 soal 1 menit, otomatis lanjut, hasil langsung tampil.</p>
               </button>
             </div>
+            {loading ? <p className="mt-4 text-center text-sm font-semibold text-cyan-100">Mengecek sesi login...</p> : null}
           </div>
         </section>
       </main>
@@ -666,7 +684,7 @@ export default function StudentAppPage() {
               {current.question_type === "matching" ? "Mencocokkan" : current.question_type === "short_answer" ? "Isian Singkat" : "Pilihan Ganda"}
             </div>
             <h2 className="mt-5 text-base font-black leading-relaxed text-[#0b1f5c]">{current.question_text}</h2>
-            {current.media_type === "image" && current.media_url ? <p className="mt-3 rounded-md bg-slate-50 p-3 text-sm">Gambar soal: {current.media_url}</p> : null}
+            {current.media_type === "image" && current.media_url ? <img src={current.media_url} alt="Gambar soal" className="mt-3 max-h-72 w-full rounded-xl border object-contain" /> : null}
             <div className="mt-5 grid gap-3">
               {current.question_type === "multiple_choice" ? current.question_options?.map((option) => (
                 <label key={option.option_label} className={`flex min-h-14 items-center gap-3 rounded-xl border p-3 font-black transition ${answers[current.id]?.option === option.option_label ? "border-blue-600 bg-blue-50 text-[#0b1f5c]" : "border-slate-100 bg-white text-[#0b1f5c]"}`}>

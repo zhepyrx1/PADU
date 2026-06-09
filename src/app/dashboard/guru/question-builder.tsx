@@ -17,6 +17,9 @@ type Exam = {
 type DraftQuestion = {
   questionText: string;
   questionType: QuestionType;
+  score?: number;
+  mediaPath?: string | null;
+  mediaPreview?: string | null;
   options?: Option[];
   shortAnswers?: string[];
   pairs?: Pair[];
@@ -56,6 +59,7 @@ export function QuestionBuilder() {
   const [shortAnswers, setShortAnswers] = useState<string[]>([""]);
   const [pairs, setPairs] = useState<Pair[]>([{ left: "", right: "" }, { left: "", right: "" }]);
   const [mediaPath, setMediaPath] = useState("");
+  const [mediaPreview, setMediaPreview] = useState("");
   const [message, setMessage] = useState("");
   const [drafts, setDrafts] = useState<DraftQuestion[]>([]);
   const [draftIndex, setDraftIndex] = useState<number | null>(null);
@@ -132,6 +136,7 @@ export function QuestionBuilder() {
     setShortAnswers([""]);
     setPairs([{ left: "", right: "" }, { left: "", right: "" }]);
     setMediaPath("");
+    setMediaPreview("");
     setDraftIndex(null);
     setMessage("Form soal sudah direset.");
   }
@@ -151,10 +156,34 @@ export function QuestionBuilder() {
     await loadExamSync();
   }
 
+  async function compressImage(file: File) {
+    if (!file.type.startsWith("image/")) return file;
+    const imageUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.src = imageUrl;
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Gambar tidak bisa dibaca."));
+    });
+    const maxSize = 1280;
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(imageUrl);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" });
+  }
+
   async function uploadImage(file: File) {
-    setMessage("Mengupload gambar...");
+    setMessage("Mengompres dan mengupload gambar...");
+    const compressedFile = await compressImage(file);
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", compressedFile);
     form.append("folder", "umum");
     const response = await fetch("/api/media/upload", { method: "POST", body: form });
     const data = await response.json();
@@ -163,7 +192,8 @@ export function QuestionBuilder() {
       return;
     }
     setMediaPath(data.path);
-    setMessage("Gambar berhasil diupload dan otomatis terhubung ke soal.");
+    setMediaPreview(URL.createObjectURL(compressedFile));
+    setMessage(`Gambar berhasil dikompres (${Math.round(file.size / 1024)} KB -> ${Math.round(compressedFile.size / 1024)} KB) dan terhubung ke soal.`);
   }
 
   async function importWord(file: File) {
@@ -192,9 +222,12 @@ export function QuestionBuilder() {
   function loadDraft(draft: DraftQuestion, index?: number) {
     setQuestionType(draft.questionType);
     setQuestionText(draft.questionText);
+    setScore(draft.score ?? 1);
     setOptions(draft.options?.length ? draft.options : emptyOptions);
     setShortAnswers(draft.shortAnswers?.length ? draft.shortAnswers : [""]);
     setPairs(draft.pairs?.length ? draft.pairs : [{ left: "", right: "" }]);
+    setMediaPath(draft.mediaPath ?? "");
+    setMediaPreview(draft.mediaPreview ?? "");
     if (typeof index === "number") {
       setDraftIndex(index);
       setOrderNumber(index + 1);
@@ -232,7 +265,6 @@ export function QuestionBuilder() {
     if (draftIndex !== null && drafts[draftIndex + 1]) {
       const nextIndex = draftIndex + 1;
       loadDraft(drafts[nextIndex], nextIndex);
-      setMediaPath("");
       await loadSavedQuestions();
       await loadExamSync();
       setMessage(`Soal berhasil disimpan. Soal ${nextIndex + 1} dari Word otomatis masuk ke form.`);
@@ -241,7 +273,67 @@ export function QuestionBuilder() {
     setMessage("Soal berhasil disimpan.");
     setQuestionText("");
     setMediaPath("");
+    setMediaPreview("");
     setOrderNumber((value) => value + 1);
+    await loadSavedQuestions();
+    await loadExamSync();
+  }
+
+  async function saveAllDrafts() {
+    if (!examId) {
+      setMessage(`Belum ada asesmen/simulasi untuk kelas ${gradeLevel}. Minta proktor membuat paket ujian terlebih dahulu.`);
+      return;
+    }
+    if (drafts.length === 0) {
+      setMessage("Belum ada draft Word yang bisa disimpan semua.");
+      return;
+    }
+
+    const mergedDrafts = drafts.map((draft, index) => (
+      index === draftIndex
+        ? {
+            questionText,
+            questionType,
+            score,
+            mediaPath: mediaPath || null,
+            mediaPreview: mediaPreview || null,
+            options,
+            shortAnswers,
+            pairs
+          }
+        : draft
+    ));
+
+    setMessage(`Menyimpan ${mergedDrafts.length} soal sekaligus...`);
+    for (let index = 0; index < mergedDrafts.length; index += 1) {
+      const draft = mergedDrafts[index];
+      const response = await fetch("/api/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          examId,
+          questionType: draft.questionType,
+          questionText: draft.questionText,
+          score: draft.score ?? 1,
+          orderNumber: index + 1,
+          mediaPath: draft.mediaPath || null,
+          options: draft.options ?? emptyOptions,
+          shortAnswers: draft.shortAnswers ?? [],
+          pairs: draft.pairs ?? []
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(data.error ?? `Gagal menyimpan soal nomor ${index + 1}.`);
+        return;
+      }
+    }
+
+    setMessage(`${mergedDrafts.length} soal berhasil disimpan semua.`);
+    setDrafts([]);
+    setDraftIndex(null);
+    resetQuestionForm();
+    setMessage(`${mergedDrafts.length} soal berhasil disimpan semua.`);
     await loadSavedQuestions();
     await loadExamSync();
   }
@@ -336,7 +428,7 @@ export function QuestionBuilder() {
         ) : null}
         {drafts.length > 0 ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-navy-900">
-            <span className="font-semibold">Draft Word: soal {(draftIndex ?? 0) + 1} dari {drafts.length}</span>
+            <span className="font-semibold">Draft Word: soal {(draftIndex ?? 0) + 1} dari {drafts.length} - Nilai {score}</span>
             <div className="flex gap-2">
               <button
                 onClick={() => draftIndex !== null && drafts[draftIndex - 1] && loadDraft(drafts[draftIndex - 1], draftIndex - 1)}
@@ -354,6 +446,12 @@ export function QuestionBuilder() {
                 className="rounded-md border bg-white px-3 py-1 disabled:opacity-50"
               >
                 Berikutnya
+              </button>
+              <button
+                onClick={saveAllDrafts}
+                className="rounded-md bg-green-600 px-3 py-1 font-semibold text-white"
+              >
+                Simpan Semua Soal
               </button>
             </div>
           </div>
@@ -384,13 +482,14 @@ export function QuestionBuilder() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="font-semibold text-navy-900">Gambar Soal Opsional</h3>
-              <p className="text-sm text-slate-600">Pilih gambar WebP/JPG maksimal 300 KB. Sistem otomatis menyimpan path gambar.</p>
+              <p className="text-sm text-slate-600">Pilih gambar JPG/PNG/WebP. Sistem otomatis mengompres agar penyimpanan lebih hemat.</p>
               {mediaPath ? <p className="mt-1 text-sm text-green-700">Terhubung: {mediaPath}</p> : null}
+              {mediaPreview ? <img src={mediaPreview} alt="Preview gambar soal" className="mt-3 max-h-48 rounded-md border object-contain" /> : null}
             </div>
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-slate-100 px-4 py-2 text-sm">
               <ImagePlus size={16} />
               Pilih Gambar
-              <input type="file" accept="image/webp,image/jpeg" className="hidden" onChange={(event) => event.target.files?.[0] && uploadImage(event.target.files[0])} />
+              <input type="file" accept="image/webp,image/jpeg,image/png" className="hidden" onChange={(event) => event.target.files?.[0] && uploadImage(event.target.files[0])} />
             </label>
           </div>
         </div>

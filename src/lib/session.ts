@@ -47,7 +47,7 @@ export async function setSession(session: AppSession) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 8
+    maxAge: 60 * 60 * 24 * 30
   });
 }
 

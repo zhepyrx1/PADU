@@ -2,14 +2,40 @@ import { NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { jsonError } from "@/lib/api";
 import { getSession } from "@/lib/session";
+import { supabaseAdmin } from "@/lib/supabase";
 
 type DraftQuestion = {
   questionText: string;
   questionType: "multiple_choice" | "short_answer" | "matching";
+  score?: number;
+  mediaPath?: string | null;
+  mediaPreview?: string | null;
   options?: { label: string; text: string; isCorrect?: boolean }[];
   shortAnswers?: string[];
   pairs?: { left: string; right: string }[];
 };
+
+function htmlToText(html: string) {
+  return html
+    .replace(/<img[^>]+src="([^"]+)"[^>]*data-preview="([^"]*)"[^>]*>/gi, "\n[[IMAGE:$1|$2]]\n")
+    .replace(/<\/p>|<br\s*\/?>|<\/tr>|<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function readScore(line: string) {
+  const direct = line.match(/^(nilai|bobot|skor|score)\s*[:=]\s*(\d+(?:[,.]\d+)?)/i);
+  if (direct) return { score: Number(direct[2].replace(",", ".")), line: "" };
+  const inline = line.match(/\((?:nilai|bobot|skor|score)?\s*(\d+(?:[,.]\d+)?)\s*(?:poin|point|nilai)\)/i);
+  if (!inline) return { score: undefined, line };
+  return {
+    score: Number(inline[1].replace(",", ".")),
+    line: line.replace(inline[0], "").trim()
+  };
+}
 
 function parseWordText(text: string): DraftQuestion[] {
   const drafts: DraftQuestion[] = [];
@@ -21,6 +47,7 @@ function parseWordText(text: string): DraftQuestion[] {
   let current: DraftQuestion | null = null;
   let currentKey = "";
   let currentNumber: number | null = null;
+  let pendingMedia: Pick<DraftQuestion, "mediaPath" | "mediaPreview"> = {};
   const globalKeys = new Map<number, string>();
 
   function collectGlobalKeysFromTokens() {
@@ -85,24 +112,37 @@ function parseWordText(text: string): DraftQuestion[] {
           isCorrect: option.label.toUpperCase() === key.toUpperCase()
         }));
       }
-      drafts.push(current);
+      drafts.push({ ...current, score: current.score ?? 1 });
       return;
     }
     if (current.questionType === "matching" && current.pairs?.length) {
-      drafts.push(current);
+      drafts.push({ ...current, score: current.score ?? 1 });
       return;
     }
     drafts.push({
       ...current,
       questionType: "short_answer",
+      score: current.score ?? 1,
       shortAnswers: current.shortAnswers ?? []
     });
   }
 
   for (const rawLine of lines) {
     let line = rawLine;
+    const imageMatch = line.match(/^\[\[IMAGE:([^|]+)\|([^\]]*)\]\]$/);
+    if (imageMatch) {
+      const media = { mediaPath: imageMatch[1], mediaPreview: imageMatch[2] || null };
+      if (current) Object.assign(current, media);
+      else pendingMedia = media;
+      continue;
+    }
+
     line = line.replace(/^soal\s+\d+\s*[-:]\s*/i, "");
     if (!line || isInstruction(line)) continue;
+    const scoreLine = readScore(line);
+    if (typeof scoreLine.score === "number" && current) current.score = scoreLine.score;
+    line = scoreLine.line;
+    if (!line) continue;
     if (collectGlobalKeys(line)) continue;
     if (/^\d{1,3}$/.test(line) && globalKeys.has(Number(line))) continue;
     if (/^[A-E]$/i.test(line) && [...globalKeys.values()].includes(line.toUpperCase())) continue;
@@ -125,10 +165,13 @@ function parseWordText(text: string): DraftQuestion[] {
       current = {
         questionText: numberedQuestion[1].trim(),
         questionType: "short_answer",
+        score: 1,
+        ...pendingMedia,
         options: [],
         shortAnswers: [],
         pairs: []
       };
+      pendingMedia = {};
       currentKey = "";
       currentNumber = Number(line.match(/^(\d+)/)?.[1] ?? drafts.length + 1);
       continue;
@@ -175,8 +218,25 @@ export async function POST(request: Request) {
   if (!file.name.toLowerCase().endsWith(".docx")) return jsonError("Saat ini import mendukung file .docx.");
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const result = await mammoth.extractRawText({ buffer });
-  const drafts = parseWordText(result.value);
+  const result = await mammoth.convertToHtml(
+    { buffer },
+    {
+      convertImage: mammoth.images.imgElement(async (image) => {
+        const base64 = await image.read("base64");
+        const bytes = Buffer.from(base64, "base64");
+        const ext = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
+        const path = `word-import/${crypto.randomUUID()}.${ext}`;
+        const upload = await supabaseAdmin.storage.from("question-images").upload(path, bytes, {
+          contentType: image.contentType,
+          upsert: false
+        });
+        if (upload.error) return { src: "", "data-preview": `data:${image.contentType};base64,${base64}` };
+        const publicUrl = supabaseAdmin.storage.from("question-images").getPublicUrl(path).data.publicUrl;
+        return { src: path, "data-preview": publicUrl || `data:${image.contentType};base64,${base64}` };
+      })
+    }
+  );
+  const drafts = parseWordText(htmlToText(result.value));
 
   return NextResponse.json({
     drafts,
